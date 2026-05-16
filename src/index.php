@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VLSM & FLSM Calculator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        input[readonly] { background-color: #1e293b; color: #94a3b8; cursor: not-allowed; }
+
+        /* Smooth fade-in for results */
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+        .fade-in { animation: fadeIn 0.25s ease both; }
+
+        /* Table: always scrollable, name column sticky on mobile */
+        .subnet-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .subnet-table { min-width: 640px; }
+        @media (max-width: 639px) {
+            .subnet-table th:first-child,
+            .subnet-table td:first-child {
+                position: sticky;
+                left: 0;
+                background: #0f172a;
+                z-index: 1;
+            }
+        }
+
+        /* IPv6 address wraps instead of overflowing */
+        #ipv6-full-result { word-break: break-all; }
+
+        /* Numeric keyboard on mobile for number inputs */
+        input[type=number] { -moz-appearance: textfield; }
+        input[type=number]::-webkit-outer-spin-button,
+        input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen p-3 sm:p-6 md:p-10">
+    <div class="max-w-5xl mx-auto">
+
+        <!-- Toggle Header -->
+        <div class="flex justify-center mb-6 sm:mb-8">
+            <div class="inline-flex rounded-lg bg-slate-800 p-1 w-full sm:w-auto">
+                <button onclick="switchMode('ipv4')" id="btn-ipv4"
+                    class="flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-md bg-blue-600 text-white font-bold text-sm transition">
+                    IPv4 Subnetting
+                </button>
+                <button onclick="switchMode('ipv6')" id="btn-ipv6"
+                    class="flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-md text-slate-400 hover:text-white text-sm transition">
+                    IPv6 Quiz
+                </button>
+            </div>
+        </div>
+
+        <!-- ── IPv4 SECTION ── -->
+        <div id="section-ipv4" class="space-y-4 sm:space-y-6">
+            <div class="bg-slate-900 p-4 sm:p-6 rounded-xl border border-slate-800 shadow-2xl">
+
+                <!-- Network Address + Prefix -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+                    <div>
+                        <label class="block text-xs font-bold uppercase text-slate-500 mb-2">
+                            Network Address
+                        </label>
+                        <div class="flex gap-2">
+                            <input type="text" id="ipv4_addr" placeholder="e.g. 192.168.1.0"
+                                oninput="validateIPAddress(this)"
+                                class="w-full p-3 rounded-lg bg-slate-800 border border-slate-700 font-mono text-sm focus:border-blue-500 outline-none">
+                        </div>
+                        <p id="ip-error" class="text-xs text-red-400 mt-1 hidden"></p>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold uppercase text-slate-500 mb-2">Prefix (1 – 30)</label>
+                        <input type="number" id="ipv4_prefix" value="24" min="1" max="30" step="1"
+                            inputmode="numeric"
+                            onkeydown="if(!/[0-9]|Backspace|ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Tab|Delete/.test(event.key)) event.preventDefault()"
+                            onblur="sanitizePrefix(this); randomizeIP()"
+                            class="w-full p-3 rounded-lg bg-slate-800 border border-slate-700 font-mono text-sm focus:border-blue-500 outline-none">
+                        <p id="prefix-error" class="text-xs text-red-400 mt-1 hidden"></p>
+                    </div>
+                </div>
+
+                <!-- Host Requirements -->
+                <div class="mb-5">
+                    <label class="block text-xs font-bold uppercase text-slate-500 mb-3">Host Requirements</label>
+                    <div id="host-rows" class="space-y-2 mb-3">
+                        <div class="host-row grid grid-cols-[2fr_1fr_auto] sm:grid-cols-[1fr_120px_auto] gap-2 items-center">
+                            <input type="text" placeholder="Network name (e.g. Net A)"
+                                class="h-name w-full p-2.5 rounded-lg bg-slate-800 border border-slate-700 text-sm">
+                            <input type="number" placeholder="Hosts" min="1" step="1" inputmode="numeric"
+                                onkeydown="if(!/[0-9]|Backspace|ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Tab|Delete/.test(event.key)) event.preventDefault()"
+                                class="h-count w-full p-2.5 rounded-lg bg-slate-800 border border-slate-700 text-sm">
+                            <button onclick="this.closest('.host-row').remove()"
+                                class="text-red-500 hover:text-red-400 active:text-red-600 px-2 py-2 rounded-lg hover:bg-slate-800 transition text-lg leading-none">✕</button>
+                        </div>
+                    </div>
+                    <button onclick="addHostRow()"
+                        class="text-sm text-blue-400 hover:text-blue-300 font-semibold py-1">+ Add Network</button>
+                </div>
+
+                <button onclick="calculateIPv4()"
+                    class="w-full bg-blue-600 hover:bg-blue-500 active:bg-blue-700 p-3.5 sm:p-4 rounded-lg font-bold text-base sm:text-lg shadow-lg transition">
+                    Generate Subnet Table
+                </button>
+            </div>
+
+            <!-- IPv4 Results -->
+            <div id="ipv4-results" class="hidden space-y-4 sm:space-y-6 fade-in">
+                <div class="flex flex-wrap justify-between items-center gap-2">
+                    <h2 class="text-lg sm:text-xl font-bold">Subnet Table</h2>
+                    <span id="lsm-indicator"
+                        class="px-3 py-1 bg-blue-900/50 text-blue-300 rounded-full text-xs font-bold border border-blue-700"></span>
+                </div>
+
+                <!-- Table — scrollable, name column sticky on mobile -->
+                <div class="subnet-table-wrap rounded-lg border border-slate-800">
+                    <table class="subnet-table w-full text-left bg-slate-900 text-sm">
+                        <thead class="bg-slate-800 text-slate-400 text-xs uppercase">
+                            <tr>
+                                <th class="p-3 sm:p-4 whitespace-nowrap">Name</th>
+                                <th class="p-3 sm:p-4 whitespace-nowrap">Req.</th>
+                                <th class="p-3 sm:p-4 whitespace-nowrap">Network ID</th>
+                                <th class="p-3 sm:p-4 whitespace-nowrap">Usable Range</th>
+                                <th class="p-3 sm:p-4 whitespace-nowrap">Broadcast</th>
+                                <th class="p-3 sm:p-4 whitespace-nowrap">Mask</th>
+                                <th class="p-3 sm:p-4 whitespace-nowrap">Hosts</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ipv4-tbody"></tbody>
+                    </table>
+                </div>
+
+                <!-- Steps -->
+                <div class="bg-slate-900 p-4 sm:p-6 rounded-xl border border-slate-800">
+                    <h3 class="text-xs font-bold uppercase text-slate-500 mb-3 tracking-widest">Calculation Steps</h3>
+                    <ul id="steps-list" class="space-y-2 text-sm text-slate-400 list-disc list-inside"></ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── IPv6 SECTION ── -->
+        <div id="section-ipv6" class="hidden space-y-4 sm:space-y-6">
+            <div class="bg-slate-900 p-4 sm:p-8 rounded-2xl border border-slate-800 shadow-2xl">
+                <h3 class="text-center text-slate-500 text-xs sm:text-sm mb-5 sm:mb-6 font-mono">
+                    IPv6 Compression Quiz
+                </h3>
+
+                <div class="grid gap-5 mb-8">
+                    <div class="bg-slate-950 p-4 rounded-xl border border-slate-800">
+                        <p class="text-xs uppercase text-slate-500 mb-2">Full Expanded IPv6 Address</p>
+                        <p id="ipv6-compressor-display"
+                            class="text-lg sm:text-xl font-bold text-white font-mono break-all">0000:0000:0000:0000:0000:0000:0000:0000</p>
+                        <p id="ipv6-compressor-msg" class="mt-2 text-sm text-slate-400">Compress the full address by omitting leading zeros and all-zero segments.</p>
+                    </div>
+
+                    <div class="bg-slate-950 p-4 rounded-xl border border-slate-800">
+                        <p class="text-xs uppercase text-slate-500 mb-2">Compressed IPv6 Answer</p>
+                        <input id="ipv6-compressor-answer" type="text" placeholder="e.g. 2001:db8::1"
+                            class="w-full p-3 rounded-lg bg-slate-800 border border-slate-700 font-mono text-sm focus:border-blue-500 outline-none">
+                        <p id="ipv6-compressor-error" class="text-xs text-red-400 mt-2 hidden"></p>
+                    </div>
+
+                    <div class="grid gap-3 sm:grid-cols-[1fr_1fr]">
+                        <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 text-sm text-slate-400">
+                            <p class="font-bold uppercase text-xs text-slate-500 mb-2">Compress Rules</p>
+                            <ul class="list-disc list-inside space-y-1">
+                                <li>Omit leading zeros from each hextet.</li>
+                                <li>Replace the longest consecutive all-zero hextet run with <strong>::</strong>.</li>
+                                <li>Use the first run when multiple runs have the same length.</li>
+                            </ul>
+                        </div>
+                        <div class="flex flex-wrap gap-2 items-end">
+                            <button onclick="checkIpv6CompressorQuiz()"
+                                class="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 p-3 rounded-lg text-sm font-bold text-white transition">Check</button>
+                            <button onclick="nextIpv6CompressorQuiz()"
+                                class="w-full sm:w-auto bg-sky-600 hover:bg-sky-500 active:bg-sky-700 p-3 rounded-lg text-sm font-bold text-white transition">Next</button>
+                            <button onclick="showIpv6CompressorAnswer()"
+                                class="w-full sm:w-auto bg-yellow-600 hover:bg-yellow-500 active:bg-yellow-700 p-3 rounded-lg text-sm font-bold text-white transition">Show Me</button>
+                            <button onclick="resetIpv6CompressorQuiz()"
+                                class="w-full sm:w-auto bg-slate-600 hover:bg-slate-500 active:bg-slate-700 p-3 rounded-lg text-sm font-bold text-white transition">Reset</button>
+                        </div>
+                    </div>
+
+                    <div id="ipv6-compressor-feedback" class="hidden rounded-xl border border-slate-700 bg-slate-950 p-4 text-sm"></div>
+                </div>
+            </div>
+
+            <div class="bg-slate-900 p-4 sm:p-8 rounded-2xl border border-slate-800 shadow-2xl">
+                <h3 class="text-center text-slate-500 text-xs sm:text-sm mb-5 sm:mb-6 font-mono">
+                    IPv6 Decompression Quiz
+                </h3>
+
+                <div class="grid gap-5">
+                    <div class="bg-slate-950 p-4 rounded-xl border border-slate-800">
+                        <p class="text-xs uppercase text-slate-500 mb-2">Compressed IPv6 Address</p>
+                        <p id="ipv6-compressed-display"
+                            class="text-lg sm:text-xl font-bold text-white font-mono break-all">::</p>
+                        <p id="ipv6-quiz-msg" class="mt-2 text-sm text-slate-400">Expand the compressed address into full 8-hextet notation.</p>
+                    </div>
+
+                    <div class="bg-slate-950 p-4 rounded-xl border border-slate-800">
+                        <p class="text-xs uppercase text-slate-500 mb-2">Full Expanded Address</p>
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            <input id="ipv6-hextet-0" type="text" maxlength="4" placeholder="0000"
+                                class="ipv6-hextet w-full p-3 rounded-lg bg-slate-800 border border-slate-700 font-mono text-sm text-center uppercase focus:border-blue-500 outline-none">
+                            <input id="ipv6-hextet-1" type="text" maxlength="4" placeholder="0000"
+                                class="ipv6-hextet w-full p-3 rounded-lg bg-slate-800 border border-slate-700 font-mono text-sm text-center uppercase focus:border-blue-500 outline-none">
+                            <input id="ipv6-hextet-2" type="text" maxlength="4" placeholder="0000"
+                                class="ipv6-hextet w-full p-3 rounded-lg bg-slate-800 border border-slate-700 font-mono text-sm text-center uppercase focus:border-blue-500 outline-none">
+                            <input id="ipv6-hextet-3" type="text" maxlength="4" placeholder="0000"
+                                class="ipv6-hextet w-full p-3 rounded-lg bg-slate-800 border border-slate-700 font-mono text-sm text-center uppercase focus:border-blue-500 outline-none">
+                            <input id="ipv6-hextet-4" type="text" maxlength="4" placeholder="0000"
+                                class="ipv6-hextet w-full p-3 rounded-lg bg-slate-800 border border-slate-700 font-mono text-sm text-center uppercase focus:border-blue-500 outline-none">
+                            <input id="ipv6-hextet-5" type="text" maxlength="4" placeholder="0000"
+                                class="ipv6-hextet w-full p-3 rounded-lg bg-slate-800 border border-slate-700 font-mono text-sm text-center uppercase focus:border-blue-500 outline-none">
+                            <input id="ipv6-hextet-6" type="text" maxlength="4" placeholder="0000"
+                                class="ipv6-hextet w-full p-3 rounded-lg bg-slate-800 border border-slate-700 font-mono text-sm text-center uppercase focus:border-blue-500 outline-none">
+                            <input id="ipv6-hextet-7" type="text" maxlength="4" placeholder="0000"
+                                class="ipv6-hextet w-full p-3 rounded-lg bg-slate-800 border border-slate-700 font-mono text-sm text-center uppercase focus:border-blue-500 outline-none">
+                        </div>
+                        <p id="ipv6-answer-error" class="text-xs text-red-400 mt-2 hidden"></p>
+                    </div>
+
+                    <div class="grid gap-3 sm:grid-cols-[1fr_1fr]">
+                        <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 text-sm text-slate-400">
+                            <p class="font-bold uppercase text-xs text-slate-500 mb-2">Rules</p>
+                            <ul class="list-disc list-inside space-y-1">
+                                <li>Omit leading zeros only; trailing zeros stay.</li>
+                                <li>Use <strong>::</strong> once for the longest run of all-zero hextets.</li>
+                                <li>Full answer must be eight 4-digit hextets.</li>
+                            </ul>
+                        </div>
+                        <div class="flex flex-wrap gap-2 items-end">
+                            <button onclick="checkIpv6Quiz()"
+                                class="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 p-3 rounded-lg text-sm font-bold text-white transition">Check</button>
+                            <button onclick="nextIpv6Quiz()"
+                                class="w-full sm:w-auto bg-sky-600 hover:bg-sky-500 active:bg-sky-700 p-3 rounded-lg text-sm font-bold text-white transition">Next</button>
+                            <button onclick="showIpv6Answer()"
+                                class="w-full sm:w-auto bg-yellow-600 hover:bg-yellow-500 active:bg-yellow-700 p-3 rounded-lg text-sm font-bold text-white transition">Show Me</button>
+                            <button onclick="resetIpv6Quiz()"
+                                class="w-full sm:w-auto bg-slate-600 hover:bg-slate-500 active:bg-slate-700 p-3 rounded-lg text-sm font-bold text-white transition">Reset</button>
+                        </div>
+                    </div>
+
+                    <div id="ipv6-feedback" class="hidden rounded-xl border border-slate-700 bg-slate-950 p-4 text-sm"></div>
+                </div>
+            </div>
+        </div>
+
+    </div><!-- /max-w -->
+
+    <script>
+        // --- Navigation ---
+        function switchMode(mode) {
+            document.getElementById('section-ipv4').classList.toggle('hidden', mode === 'ipv6');
+            document.getElementById('section-ipv6').classList.toggle('hidden', mode === 'ipv4');
+            document.getElementById('btn-ipv4').className = (mode === 'ipv4')
+                ? 'flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-md bg-blue-600 text-white font-bold text-sm transition'
+                : 'flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-md text-slate-400 hover:text-white text-sm transition';
+            document.getElementById('btn-ipv6').className = (mode === 'ipv6')
+                ? 'flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-md bg-blue-600 text-white font-bold text-sm transition'
+                : 'flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-md text-slate-400 hover:text-white text-sm transition';
+        }
+
+        // --- Prefix sanitization (onblur only — doesn't interrupt mid-typing) ---
+        function sanitizePrefix(el) {
+            let val = parseInt(el.value) || 24;
+            if (val < 1)  val = 1;
+            if (val > 30) val = 30;
+            el.value = val;
+        }
+
+        // --- Network Address ---
+        async function randomizeIP() {
+            const prefix = parseInt(document.getElementById('ipv4_prefix').value) || 24;
+            const res  = await fetch(`api.php?action=generate&prefix=${prefix}`);
+            const data = await res.json();
+            document.getElementById('ipv4_addr').value = data.ip;
+            document.getElementById('ip-error').classList.add('hidden');
+        }
+
+        // --- Validate IP Address ---
+        function validateIPAddress(el) {
+            const errEl = document.getElementById('ip-error');
+            const value = el.value.trim();
+            
+            if (!value) {
+                errEl.classList.add('hidden');
+                return true;
+            }
+
+            // Check if valid IPv4 format
+            const ipRegex = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+            const match = value.match(ipRegex);
+
+            if (!match) {
+                errEl.innerText = 'Invalid IPv4 format. Use XXX.XXX.XXX.XXX';
+                errEl.classList.remove('hidden');
+                return false;
+            }
+
+            // Check if each octet is in valid range (0-255)
+            for (let i = 1; i <= 4; i++) {
+                const octet = parseInt(match[i]);
+                if (octet > 255) {
+                    errEl.innerText = 'Each octet must be 0-255.';
+                    errEl.classList.remove('hidden');
+                    return false;
+                }
+            }
+
+            errEl.classList.add('hidden');
+            return true;
+        }
+
+        // --- Host rows ---
+        function makeHostRowHTML() {
+            return `
+                <input type="text" placeholder="Network name (e.g. Sales)"
+                    class="h-name w-full p-2.5 rounded-lg bg-slate-800 border border-slate-700 text-sm">
+                <input type="number" placeholder="Hosts" min="1" step="1" inputmode="numeric"
+                    onkeydown="if(!/[0-9]|Backspace|ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Tab|Delete/.test(event.key)) event.preventDefault()"
+                    class="h-count w-full p-2.5 rounded-lg bg-slate-800 border border-slate-700 text-sm">
+                <button onclick="this.closest('.host-row').remove()"
+                    class="text-red-500 hover:text-red-400 px-2 py-2 rounded-lg hover:bg-slate-800 transition text-lg leading-none">✕</button>`;
+        }
+
+        function addHostRow() {
+            const div = document.createElement('div');
+            div.className = 'host-row grid grid-cols-[2fr_1fr_auto] sm:grid-cols-[1fr_120px_auto] gap-2 items-center';
+            div.innerHTML = makeHostRowHTML();
+            document.getElementById('host-rows').appendChild(div);
+        }
+
+        // --- IPv4 Calculate ---
+        async function calculateIPv4() {
+            const errEl  = document.getElementById('prefix-error');
+            const ipErrEl = document.getElementById('ip-error');
+            const ipv4Addr = document.getElementById('ipv4_addr').value.trim();
+            const prefix = parseInt(document.getElementById('ipv4_prefix').value);
+            errEl.classList.add('hidden');
+
+            // Validate IP address
+            if (!ipv4Addr) {
+                ipErrEl.innerText = 'Please enter a network address.';
+                ipErrEl.classList.remove('hidden');
+                return;
+            }
+
+            if (!validateIPAddress(document.getElementById('ipv4_addr'))) {
+                return;
+            }
+
+            if (isNaN(prefix) || prefix < 1 || prefix > 30) {
+                errEl.innerText = 'Prefix must be between 1 and 30.';
+                errEl.classList.remove('hidden');
+                return;
+            }
+
+            const hosts = Array.from(document.querySelectorAll('.host-row'))
+                .map(row => ({
+                    name:  row.querySelector('.h-name').value.trim() || 'Unnamed',
+                    count: parseInt(row.querySelector('.h-count').value) || 0
+                }))
+                .filter(h => h.count > 0);
+
+            if (hosts.length === 0) {
+                errEl.innerText = 'Please add at least one network with a valid host count.';
+                errEl.classList.remove('hidden');
+                return;
+            }
+
+            const res  = await fetch('api.php?action=calculate', {
+                method:  'POST',
+                headers: {'Content-Type': 'application/json'},
+                body:    JSON.stringify({
+                    base_ip: ipv4Addr,
+                    prefix,
+                    hosts
+                })
+            });
+
+            const data      = await res.json();
+            const resultsEl = document.getElementById('ipv4-results');
+
+            if (data.status === 'success') {
+                resultsEl.classList.remove('hidden');
+                resultsEl.classList.add('fade-in');
+                document.getElementById('lsm-indicator').innerText = data.mode;
+                document.getElementById('ipv4-tbody').innerHTML = data.subnets.map(s => `
+                    <tr class="border-t border-slate-800 hover:bg-slate-800/40 transition">
+                        <td class="p-3 sm:p-4 font-bold text-blue-400 whitespace-nowrap">
+                            ${s.name} <span class="text-[10px] text-slate-500 font-normal">${s.prefix}</span>
+                        </td>
+                        <td class="p-3 sm:p-4 text-center text-yellow-300">${s.hosts_required}</td>
+                        <td class="p-3 sm:p-4 font-mono whitespace-nowrap">${s.network_address}</td>
+                        <td class="p-3 sm:p-4 font-mono text-xs whitespace-nowrap">${s.first_usable} – ${s.last_usable}</td>
+                        <td class="p-3 sm:p-4 font-mono text-red-400 whitespace-nowrap">${s.broadcast}</td>
+                        <td class="p-3 sm:p-4 text-xs text-slate-500 font-mono whitespace-nowrap">${s.subnet_mask}</td>
+                        <td class="p-3 sm:p-4 text-center text-green-400">${s.total_hosts}</td>
+                    </tr>
+                `).join('');
+                document.getElementById('steps-list').innerHTML = data.steps
+                    .map(s => `<li>${s}</li>`).join('');
+                resultsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } else {
+                errEl.innerText = data.suggestion
+                    ? `Hindi Kasya! Use a /${data.suggestion} prefix or larger.`
+                    : (data.message || 'An error occurred.');
+                errEl.classList.remove('hidden');
+                resultsEl.classList.add('hidden');
+            }
+        }
+
+        // --- IPv6 Quiz ---
+        let ipv6ExpectedFull = '';
+
+        function generateRandomIpv6Full() {
+            const hextets = Array.from({ length: 8 }, () => {
+                const value = Math.floor(Math.random() * 0x10000);
+                return value.toString(16).padStart(4, '0');
+            });
+
+            const runLength = Math.floor(Math.random() * 3) + 2; // 2-4 zero hextets for compression
+            const maxStart = 8 - runLength;
+            const startIndex = Math.floor(Math.random() * (maxStart + 1));
+            for (let i = 0; i < runLength; i++) {
+                hextets[startIndex + i] = '0000';
+            }
+
+            return hextets;
+        }
+
+        function compressIpv6Address(fullHextets) {
+            const trimmed = fullHextets.map(h => {
+                const noLeading = h.replace(/^0+/, '');
+                return noLeading === '' ? '0' : noLeading;
+            });
+
+            let bestStart = -1;
+            let bestLen = 0;
+            let currentStart = -1;
+            let currentLen = 0;
+
+            for (let i = 0; i < trimmed.length; i++) {
+                if (trimmed[i] === '0') {
+                    if (currentStart === -1) currentStart = i;
+                    currentLen++;
+                } else {
+                    if (currentLen > bestLen) {
+                        bestStart = currentStart;
+                        bestLen = currentLen;
+                    }
+                    currentStart = -1;
+                    currentLen = 0;
+                }
+            }
+            if (currentLen > bestLen) {
+                bestStart = currentStart;
+                bestLen = currentLen;
+            }
+
+            if (bestLen >= 2) {
+                const before = trimmed.slice(0, bestStart);
+                const after = trimmed.slice(bestStart + bestLen);
+                const prefix = before.length ? before.join(':') : '';
+                const suffix = after.length ? after.join(':') : '';
+
+                if (!prefix && !suffix) return '::';
+                if (!prefix) return `::${suffix}`;
+                if (!suffix) return `${prefix}::`;
+                return `${prefix}::${suffix}`;
+            }
+
+            return trimmed.join(':');
+        }
+
+        function resetIpv6Inputs() {
+            for (let i = 0; i < 8; i++) {
+                const input = document.getElementById(`ipv6-hextet-${i}`);
+                input.value = '';
+                input.classList.remove('border-emerald-400', 'border-red-500');
+            }
+            document.getElementById('ipv6-answer-error').classList.add('hidden');
+            document.getElementById('ipv6-feedback').classList.add('hidden');
+            document.getElementById('ipv6-feedback').innerText = '';
+        }
+
+        function setIpv6Quiz(fullHextets) {
+            ipv6ExpectedFull = fullHextets.join(':').toLowerCase();
+            document.getElementById('ipv6-compressed-display').innerText = compressIpv6Address(fullHextets);
+            resetIpv6Inputs();
+            document.getElementById('ipv6-quiz-msg').innerText = 'Expand the compressed address into full 8-hextet notation.';
+        }
+
+        function normalizeHextet(value) {
+            const cleaned = value.trim().toLowerCase();
+            return cleaned.replace(/^0+/, '') || '0';
+        }
+
+        function getIpv6Answer() {
+            const hextets = [];
+            for (let i = 0; i < 8; i++) {
+                const input = document.getElementById(`ipv6-hextet-${i}`);
+                const text = input.value.trim();
+                if (!/^[0-9a-fA-F]{1,4}$/.test(text)) {
+                    return { valid: false, message: `Hextet ${i + 1} must be 1-4 hex digits.` };
+                }
+                hextets.push(text.toLowerCase().padStart(4, '0'));
+            }
+            return { valid: true, value: hextets.join(':') };
+        }
+
+        function highlightIpv6Results(correctArray) {
+            for (let i = 0; i < 8; i++) {
+                const input = document.getElementById(`ipv6-hextet-${i}`);
+                const userValue = input.value.trim().toLowerCase().padStart(4, '0');
+                if (userValue === correctArray[i]) {
+                    input.classList.remove('border-red-500');
+                    input.classList.add('border-emerald-400');
+                } else {
+                    input.classList.remove('border-emerald-400');
+                    input.classList.add('border-red-500');
+                }
+            }
+        }
+
+        function checkIpv6Quiz() {
+            const answer = getIpv6Answer();
+            const errorEl = document.getElementById('ipv6-answer-error');
+            const feedbackEl = document.getElementById('ipv6-feedback');
+            errorEl.classList.add('hidden');
+            feedbackEl.classList.add('hidden');
+
+            if (!answer.valid) {
+                errorEl.innerText = answer.message;
+                errorEl.classList.remove('hidden');
+                return;
+            }
+
+            const expected = ipv6ExpectedFull;
+            if (answer.value === expected) {
+                feedbackEl.innerText = 'Correct! You decompressed the IPv6 address successfully.';
+                feedbackEl.className = 'rounded-xl border border-emerald-700 bg-emerald-950/20 p-4 text-sm text-emerald-200';
+                feedbackEl.classList.remove('hidden');
+                highlightIpv6Results(expected.split(':'));
+            } else {
+                feedbackEl.innerText = 'Not quite — check the highlighted hextets and try again.';
+                feedbackEl.className = 'rounded-xl border border-red-700 bg-red-950/20 p-4 text-sm text-red-200';
+                feedbackEl.classList.remove('hidden');
+                highlightIpv6Results(expected.split(':'));
+            }
+        }
+
+        function showIpv6Answer() {
+            const correct = ipv6ExpectedFull.split(':');
+            for (let i = 0; i < 8; i++) {
+                const input = document.getElementById(`ipv6-hextet-${i}`);
+                input.value = correct[i];
+                input.classList.remove('border-red-500');
+                input.classList.add('border-emerald-400');
+            }
+            const feedbackEl = document.getElementById('ipv6-feedback');
+            feedbackEl.innerText = `Answer revealed: ${ipv6ExpectedFull}`;
+            feedbackEl.className = 'rounded-xl border border-slate-700 bg-slate-950/20 p-4 text-sm text-slate-200';
+            feedbackEl.classList.remove('hidden');
+            document.getElementById('ipv6-answer-error').classList.add('hidden');
+        }
+
+        let ipv6CompressorExpected = '';
+
+        function setIpv6CompressorQuiz(fullHextets) {
+            ipv6CompressorExpected = compressIpv6Address(fullHextets);
+            document.getElementById('ipv6-compressor-display').innerText = fullHextets.join(':');
+            document.getElementById('ipv6-compressor-answer').value = '';
+            document.getElementById('ipv6-compressor-error').classList.add('hidden');
+            const feedbackEl = document.getElementById('ipv6-compressor-feedback');
+            feedbackEl.classList.add('hidden');
+            feedbackEl.innerText = '';
+            document.getElementById('ipv6-compressor-msg').innerText = 'Compress the full address by omitting leading zeros and all-zero segments.';
+        }
+
+        function normalizeCompressedAnswer(value) {
+            return value.trim().toLowerCase().replace(/\s+/g, '');
+        }
+
+        function checkIpv6CompressorQuiz() {
+            const answerInput = document.getElementById('ipv6-compressor-answer');
+            const errorEl = document.getElementById('ipv6-compressor-error');
+            const feedbackEl = document.getElementById('ipv6-compressor-feedback');
+            errorEl.classList.add('hidden');
+            feedbackEl.classList.add('hidden');
+
+            const userValue = normalizeCompressedAnswer(answerInput.value);
+            if (!userValue) {
+                errorEl.innerText = 'Enter a compressed IPv6 address to check.';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+
+            if (!/^([0-9a-f]{1,4}|:)+$/.test(userValue) || /::.*::/.test(userValue)) {
+                errorEl.innerText = 'Enter a valid compressed IPv6 address using only hex digits and :: once.';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+
+            if (userValue === ipv6CompressorExpected) {
+                feedbackEl.innerText = 'Correct! Your compression is valid.';
+                feedbackEl.className = 'rounded-xl border border-emerald-700 bg-emerald-950/20 p-4 text-sm text-emerald-200';
+            } else {
+                feedbackEl.innerText = `Not quite — the correct compressed form is ${ipv6CompressorExpected}`;
+                feedbackEl.className = 'rounded-xl border border-red-700 bg-red-950/20 p-4 text-sm text-red-200';
+            }
+            feedbackEl.classList.remove('hidden');
+        }
+
+        function showIpv6CompressorAnswer() {
+            const answerInput = document.getElementById('ipv6-compressor-answer');
+            answerInput.value = ipv6CompressorExpected;
+            const feedbackEl = document.getElementById('ipv6-compressor-feedback');
+            feedbackEl.innerText = `Correct compression: ${ipv6CompressorExpected}`;
+            feedbackEl.className = 'rounded-xl border border-slate-700 bg-slate-950/20 p-4 text-sm text-slate-200';
+            feedbackEl.classList.remove('hidden');
+            document.getElementById('ipv6-compressor-error').classList.add('hidden');
+        }
+
+        function nextIpv6CompressorQuiz() {
+            const full = generateRandomIpv6Full();
+            setIpv6CompressorQuiz(full);
+        }
+
+        function resetIpv6CompressorQuiz() {
+            document.getElementById('ipv6-compressor-answer').value = '';
+            document.getElementById('ipv6-compressor-error').classList.add('hidden');
+            const feedbackEl = document.getElementById('ipv6-compressor-feedback');
+            feedbackEl.classList.add('hidden');
+            feedbackEl.innerText = '';
+            document.getElementById('ipv6-compressor-msg').innerText = 'Compress the full address by omitting leading zeros and all-zero segments.';
+        }
+
+        function nextIpv6Quiz() {
+            const full = generateRandomIpv6Full();
+            setIpv6Quiz(full);
+        }
+
+        function resetIpv6Quiz() {
+            resetIpv6Inputs();
+            document.getElementById('ipv6-quiz-msg').innerText = 'Try again with the same compressed address.';
+        }
+
+        window.onload = () => {
+            randomizeIP();
+            nextIpv6CompressorQuiz();
+            nextIpv6Quiz();
+        };
+    </script>
+</body>
+</html>
